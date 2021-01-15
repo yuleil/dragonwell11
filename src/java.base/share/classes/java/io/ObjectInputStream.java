@@ -2062,40 +2062,21 @@ public class ObjectInputStream
 
         skipCustomData();
 
-         totalObjectRefs++;
-        depth++;
-
-        if (useFastSerializer) {
-            desc.initNonProxyFast(readDesc, resolveEx);
-            ObjectStreamClass superDesc = desc.getSuperDesc();
-            long originDepth = depth - 1;
-            // Since desc is obtained from the lookup method, we will lose the depth and
-            // totalObjectRefs of superDesc. So we add a loop here to compute the depth
-            // and objectRef of superDesc.
-            while (superDesc != null && superDesc.forClass() != null) {
-                filterCheck(superDesc.forClass(), -1);
-                superDesc = superDesc.getSuperDesc();
-                totalObjectRefs++;
-                depth++;
-            }
-            depth = originDepth;
-        } else {
-            try {
-                desc.initNonProxy(readDesc, cl, resolveEx, readClassDesc(false));
-            } finally {
-                depth--;
-            }
+        try {
+            totalObjectRefs++;
+            depth++;
+            desc.initProxy(cl, resolveEx, readClassDesc(false));
+        } catch (OutOfMemoryError memerr) {
+            IOException ex = new InvalidObjectException("Proxy interface limit exceeded: " +
+                    Arrays.toString(ifaces));
+            ex.initCause(memerr);
+            throw ex;
+        } finally {
+            depth--;
         }
 
         handles.finish(descHandle);
         passHandle = descHandle;
-
-        if (Logging.fastSerLogger != null) {
-            Logging.fastSerLogger.log(Logger.Level.DEBUG,
-                "[Deserialize] useFastSerializer:{0}, Class name:{1}, SerialVersionUID:{2}, flags:{3}",
-                useFastSerializer, desc.getName(), desc.getSerialVersionUID(), desc.getFlags(this));
-        }
-
         return desc;
     }
 
@@ -2143,12 +2124,29 @@ public class ObjectInputStream
 
         skipCustomData();
 
-        try {
-            totalObjectRefs++;
-            depth++;
-            desc.initNonProxy(readDesc, cl, resolveEx, readClassDesc(false));
-        } finally {
-            depth--;
+        totalObjectRefs++;
+        depth++;
+
+        if (useFastSerializer) {
+            desc.initNonProxyFast(readDesc, resolveEx);
+            ObjectStreamClass superDesc = desc.getSuperDesc();
+            long originDepth = depth - 1;
+            // Since desc is obtained from the lookup method, we will lose the depth and
+            // totalObjectRefs of superDesc. So we add a loop here to compute the depth
+            // and objectRef of superDesc.
+            while (superDesc != null && superDesc.forClass() != null) {
+                filterCheck(superDesc.forClass(), -1);
+                superDesc = superDesc.getSuperDesc();
+                totalObjectRefs++;
+                depth++;
+            }
+            depth = originDepth;
+        } else {
+            try {
+                desc.initNonProxy(readDesc, cl, resolveEx, readClassDesc(false));
+            } finally {
+                depth--;
+            }
         }
 
         handles.finish(descHandle);
@@ -3039,8 +3037,6 @@ public class ObjectInputStream
             return totalBytesRead;
         }
     }
-
-    private static final Unsafe UNSAFE = Unsafe.getUnsafe();
 
     /**
      * Performs a "freeze" action, required to adhere to final field semantics.

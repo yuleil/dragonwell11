@@ -37,6 +37,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import static java.io.ObjectStreamClass.processQueue;
 import sun.reflect.misc.ReflectUtil;
+import jdk.internal.misc.Unsafe;
+
 
 /**
  * An ObjectOutputStream writes primitive data types and graphs of Java objects
