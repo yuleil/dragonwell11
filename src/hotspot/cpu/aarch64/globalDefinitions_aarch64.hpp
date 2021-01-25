@@ -53,4 +53,6 @@ const bool CCallingConventionRequiresIntsAsLongs = false;
 
 #define THREAD_LOCAL_POLL
 
+#define COMPRESSED_CLASS_POINTERS_DEPENDS_ON_COMPRESSED_OOPS true
+
 #endif // CPU_AARCH64_VM_GLOBALDEFINITIONS_AARCH64_HPP
