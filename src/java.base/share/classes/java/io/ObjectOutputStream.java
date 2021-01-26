@@ -37,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import static java.io.ObjectStreamClass.processQueue;
 import sun.reflect.misc.ReflectUtil;
+import sun.security.action.GetBooleanAction;
 
 /**
  * An ObjectOutputStream writes primitive data types and graphs of Java objects
@@ -163,6 +164,14 @@ import sun.reflect.misc.ReflectUtil;
 public class ObjectOutputStream
     extends OutputStream implements ObjectOutput, ObjectStreamConstants
 {
+
+    private static final boolean useFastSerializer =
+            AccessController.doPrivileged(new GetBooleanAction("com.alibaba.bishengFastSerialize"));
+
+    /**
+     * Magic number that is written to the stream header when using fastserilizer.
+     */
+    private static final short STREAM_MAGIC_FAST = (short) 0xdeca;
 
     private static class Caches {
         /** cache of subclass security audit results */
@@ -636,7 +645,11 @@ public class ObjectOutputStream
      *          stream
      */
     protected void writeStreamHeader() throws IOException {
-        bout.writeShort(STREAM_MAGIC);
+        if (useFastSerializer) {
+            bout.writeShort(STREAM_MAGIC_FAST);
+        } else {
+            bout.writeShort(STREAM_MAGIC);
+        }
         bout.writeShort(STREAM_VERSION);
     }
 
@@ -668,7 +681,14 @@ public class ObjectOutputStream
     protected void writeClassDescriptor(ObjectStreamClass desc)
         throws IOException
     {
-        desc.writeNonProxy(this);
+        if (useFastSerializer) {
+            writeUTF(desc.getName());
+            // The annotateClass is used to match the resolveClass called in
+            // readClassDescriptor.
+            annotateClass(desc.forClass());
+        } else {
+            desc.writeNonProxy(this);
+        }
     }
 
     /**
@@ -1278,7 +1298,13 @@ public class ObjectOutputStream
 
         if (protocol == PROTOCOL_VERSION_1) {
             // do not invoke class descriptor write hook with old protocol
-            desc.writeNonProxy(this);
+            if (useFastSerializer) {
+                // only write name and annotate class when using FastSerializer
+                writeUTF(desc.getName());
+                annotateClass(desc.forClass());
+            } else {
+                desc.writeNonProxy(this);
+            }
         } else {
             writeClassDescriptor(desc);
         }
@@ -1292,7 +1318,9 @@ public class ObjectOutputStream
         bout.setBlockDataMode(false);
         bout.writeByte(TC_ENDBLOCKDATA);
 
-        writeClassDesc(desc.getSuperDesc(), false);
+        if (!useFastSerializer) {
+            writeClassDesc(desc.getSuperDesc(), false);
+        }
     }
 
     /**

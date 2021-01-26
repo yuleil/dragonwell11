@@ -233,6 +233,30 @@ import sun.security.action.GetIntegerAction;
 public class ObjectInputStream
     extends InputStream implements ObjectInput, ObjectStreamConstants
 {
+    private static final boolean ENABLE_CLASS_CACHING =
+            AccessController.doPrivileged(new GetBooleanAction("com.alibaba.enableClassCaching"));
+
+    private static final boolean SKIP_DESCRIPTOR =
+            AccessController.doPrivileged(new GetBooleanAction("com.alibaba.skipDescriptor"));
+
+    /**
+     * value of "useFastSerializer" property
+     */
+    private static final boolean defaultFastSerializer = AccessController.doPrivileged(
+            new GetBooleanAction("com.alibaba.bishengFastSerialize"));
+
+    /**
+     * true or false for open FastSerilizer
+     * May be changed in readStreamHeader
+     */
+    private boolean useFastSerializer = defaultFastSerializer;
+
+    /**
+     * Magic number that is written to the stream header when using fastserilizer.
+     */
+    private static final short STREAM_MAGIC_FAST = (short) 0xdeca;
+
+
     /** handle value representing null */
     private static final int NULL_HANDLE = -1;
 
@@ -343,6 +367,8 @@ public class ObjectInputStream
      * may be null.
      */
     private ObjectInputFilter serialFilter;
+
+    private ClassLoader latestUserDefinedLoaderCache;
 
     /**
      * Creates an ObjectInputStream that reads from the specified InputStream.
@@ -752,6 +778,19 @@ public class ObjectInputStream
         throws IOException, ClassNotFoundException
     {
         String name = desc.getName();
+        if (ENABLE_CLASS_CACHING) {
+            if (latestUserDefinedLoaderCache == null) {
+                latestUserDefinedLoaderCache = latestUserDefinedLoader();
+            }
+            return ClassCache.forName(name, latestUserDefinedLoaderCache,
+                    (className, loader) -> {
+                        try {
+                            return Class.forName(className, false, loader);
+                        } catch (ClassNotFoundException ex) {
+                            return primClasses.get(className);
+                        }
+                    });
+        }
         try {
             return Class.forName(name, false, latestUserDefinedLoader());
         } catch (ClassNotFoundException ex) {
@@ -935,9 +974,24 @@ public class ObjectInputStream
     {
         short s0 = bin.readShort();
         short s1 = bin.readShort();
-        if (s0 != STREAM_MAGIC || s1 != STREAM_VERSION) {
-            throw new StreamCorruptedException(
-                String.format("invalid stream header: %04X%04X", s0, s1));
+        if (useFastSerializer) {
+            if (s0 != STREAM_MAGIC_FAST || s1 != STREAM_VERSION) {
+                if (s0 != STREAM_MAGIC) {
+                    throw new StreamCorruptedException(
+                            String.format("invalid stream header: %04X%04X, and FastSerializer is activated", s0, s1));
+                }
+
+                // Escape to default serialization
+                useFastSerializer = false;
+            }
+        } else if (s0 != STREAM_MAGIC || s1 != STREAM_VERSION) {
+            if (s0 == STREAM_MAGIC_FAST && s1 == STREAM_VERSION) {
+                throw new StreamCorruptedException(
+                        String.format("invalid stream header: %04X%04X, and it is a FastSerializer stream", s0, s1));
+            } else {
+                throw new StreamCorruptedException(
+                        String.format("invalid stream header: %04X%04X", s0, s1));
+            }
         }
     }
 
@@ -961,6 +1015,30 @@ public class ObjectInputStream
     protected ObjectStreamClass readClassDescriptor()
         throws IOException, ClassNotFoundException
     {
+        if (SKIP_DESCRIPTOR || useFastSerializer) {
+            String name = readUTF();
+            Class<?> cl = null;
+            ObjectStreamClass desc = new ObjectStreamClass(name);
+            if (SKIP_DESCRIPTOR && !useFastSerializer) {
+                desc.skipNonProxy(this);
+            }
+            try {
+                // In order to match this method, we add an annotateClass method in
+                // writeClassDescriptor.
+                cl = resolveClass(desc);
+            } catch (ClassNotFoundException ex) {
+                // resolveClass is just used to obtain Class which required by lookup method
+                // and it will be called again later, so we don't throw ClassNotFoundException here.
+                return desc;
+            }
+            if (cl != null) {
+                // This desc is localDesc. It may be different from the descriptor
+                // obtained from the stream.
+                desc = ObjectStreamClass.lookup(cl, true);
+            }
+            return desc;
+        }
+
         ObjectStreamClass desc = new ObjectStreamClass();
         desc.readNonProxy(this);
         return desc;
@@ -2006,12 +2084,35 @@ public class ObjectInputStream
 
         skipCustomData();
 
-        try {
-            totalObjectRefs++;
-            depth++;
-            desc.initNonProxy(readDesc, cl, resolveEx, readClassDesc(false));
-        } finally {
-            depth--;
+        totalObjectRefs++;
+        depth++;
+
+        if (useFastSerializer) {
+            desc.initNonProxyFast(readDesc, resolveEx);
+            ObjectStreamClass superDesc = desc.getSuperDesc();
+            long originDepth = depth - 1;
+            // Since desc is obtained from the lookup method, we will lose the depth and
+            // totalObjectRefs of superDesc. So we add a loop here to compute the depth
+            // and objectRef of superDesc.
+            while (superDesc != null && superDesc.forClass() != null) {
+                filterCheck(superDesc.forClass(), -1);
+                superDesc = superDesc.getSuperDesc();
+                totalObjectRefs++;
+                depth++;
+            }
+            depth = originDepth;
+
+        } else {
+            try {
+                if (SKIP_DESCRIPTOR) {
+                    readClassDesc(false);
+                    desc.initNonProxyFast(readDesc, resolveEx);
+                } else {
+                    desc.initNonProxy(readDesc, cl, resolveEx, readClassDesc(false));
+                }
+            } finally {
+                depth--;
+            }
         }
 
         handles.finish(descHandle);
@@ -2322,7 +2423,19 @@ public class ObjectInputStream
                         curContext = new SerialCallbackContext(obj, slotDesc);
 
                         bin.setBlockDataMode(true);
+                        ClassLoader currentLatestUserDefinedLoaderCache = null;
+                        if (ENABLE_CLASS_CACHING) {
+                            ClassLoader classLoader = obj.getClass().getClassLoader();
+                            if (classLoader != null &&
+                                    classLoader != ClassLoader.getPlatformClassLoader()) {
+                                currentLatestUserDefinedLoaderCache = latestUserDefinedLoaderCache;
+                                latestUserDefinedLoaderCache = null;
+                            }
+                        }
                         slotDesc.invokeReadObject(obj, this);
+                        if (ENABLE_CLASS_CACHING && currentLatestUserDefinedLoaderCache != null) {
+                            latestUserDefinedLoaderCache = currentLatestUserDefinedLoaderCache;
+                        }
                     } catch (ClassNotFoundException ex) {
                         /*
                          * In most cases, the handle table has already

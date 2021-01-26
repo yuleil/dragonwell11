@@ -270,6 +270,43 @@ public class ObjectStreamClass implements Serializable {
         return suid.longValue();
     }
 
+    ObjectStreamClass(String name) {
+        this.name  = name;
+    }
+
+    void initNonProxyFast(ObjectStreamClass model,
+                          ClassNotFoundException resolveEx) {
+        this.cl = model.cl;
+        this.resolveEx = resolveEx;
+        this.superDesc = model.superDesc;
+        name = model.name;
+        this.suid = model.suid;
+        isProxy = false;
+        isEnum = model.isEnum;
+        serializable = model.serializable;
+        externalizable = model.externalizable;
+        hasBlockExternalData = model.hasBlockExternalData;
+        hasWriteObjectData = model.hasWriteObjectData;
+        fields = model.fields;
+        primDataSize = model.primDataSize;
+        numObjFields = model.numObjFields;
+
+        writeObjectMethod = model.writeObjectMethod;
+        readObjectMethod = model.readObjectMethod;
+        readObjectNoDataMethod = model.readObjectNoDataMethod;
+        writeReplaceMethod = model.writeReplaceMethod;
+        readResolveMethod = model.readResolveMethod;
+        if (deserializeEx == null) {
+            deserializeEx = model.deserializeEx;
+        }
+        domains = model.domains;
+        cons = model.cons;
+        fieldRefl = model.fieldRefl;
+        localDesc = model;
+
+        initialized = true;
+    }
+
     /**
      * Return the class in the local VM that this version is mapped to.  Null
      * is returned if there is no corresponding local class.
@@ -799,6 +836,22 @@ public class ObjectStreamClass implements Serializable {
             }
         }
         computeFieldOffsets();
+    }
+
+    void skipNonProxy(ObjectInputStream in)
+            throws IOException {
+        in.readLong();
+        in.readByte();
+        int numFields = in.readShort();
+
+        for (int i = 0; i < numFields; i++) {
+            char tcode = (char) in.readByte();
+            int fnameLen = in.readUnsignedShort();
+            in.skipBytes(fnameLen);
+            if (tcode == 'L' || tcode == '[') {
+                in.readTypeString();
+            }
+        }
     }
 
     /**
