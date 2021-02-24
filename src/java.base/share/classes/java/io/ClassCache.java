@@ -6,16 +6,19 @@ import java.util.function.BiFunction;
 
 final class ClassCache {
 
-    private final static ConcurrentHashMap<ClassCacheKey, Class<?>> classCache = new ConcurrentHashMap<>();
+    private final static ConcurrentHashMap<ClassCacheKey, Class<?>>
+            classCache = new ConcurrentHashMap<>();
 
     static Class<?> forName(String name, ClassLoader classLoader,
                             BiFunction<String, ClassLoader, Class<?>> load)
             throws ClassNotFoundException {
         ClassCacheKey key = new ClassCacheKey(classLoader, name);
-        Class<?> clazz = classCache.computeIfAbsent(key, k -> {
-            Class<?> cl = load.apply(name, classLoader);
-            return cl == null ? NOT_EXIST.class : cl;
-        });
+        Class<?> clazz = classCache.get(key);
+        if (clazz == null) {
+            clazz = load.apply(name, classLoader);
+            clazz = clazz == null ? NOT_EXIST.class : clazz;
+            classCache.put(key, clazz);
+        }
         if (NOT_EXIST.class == clazz) {
             throw new ClassNotFoundException(name);
         }

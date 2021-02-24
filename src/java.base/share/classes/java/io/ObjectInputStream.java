@@ -233,11 +233,8 @@ import sun.security.action.GetIntegerAction;
 public class ObjectInputStream
     extends InputStream implements ObjectInput, ObjectStreamConstants
 {
-    private static final boolean ENABLE_CLASS_CACHING =
-            AccessController.doPrivileged(new GetBooleanAction("com.alibaba.enableClassCaching"));
-
-    private static final boolean SKIP_DESCRIPTOR =
-            AccessController.doPrivileged(new GetBooleanAction("com.alibaba.skipDescriptor"));
+    private static final boolean OBJECT_STREAM_OPTIMIZE =
+            AccessController.doPrivileged(new GetBooleanAction("com.alibaba.objectStreamOptimize"));
 
     /**
      * value of "useFastSerializer" property
@@ -778,7 +775,7 @@ public class ObjectInputStream
         throws IOException, ClassNotFoundException
     {
         String name = desc.getName();
-        if (ENABLE_CLASS_CACHING) {
+        if (OBJECT_STREAM_OPTIMIZE) {
             if (latestUserDefinedLoaderCache == null) {
                 latestUserDefinedLoaderCache = latestUserDefinedLoader();
             }
@@ -1015,11 +1012,11 @@ public class ObjectInputStream
     protected ObjectStreamClass readClassDescriptor()
         throws IOException, ClassNotFoundException
     {
-        if (SKIP_DESCRIPTOR || useFastSerializer) {
+        if (OBJECT_STREAM_OPTIMIZE || useFastSerializer) {
             String name = readUTF();
             Class<?> cl = null;
             ObjectStreamClass desc = new ObjectStreamClass(name);
-            if (SKIP_DESCRIPTOR && !useFastSerializer) {
+            if (OBJECT_STREAM_OPTIMIZE && !useFastSerializer) {
                 desc.skipNonProxy(this);
             }
             try {
@@ -2104,7 +2101,7 @@ public class ObjectInputStream
 
         } else {
             try {
-                if (SKIP_DESCRIPTOR) {
+                if (OBJECT_STREAM_OPTIMIZE) {
                     readClassDesc(false);
                     desc.initNonProxyFast(readDesc, resolveEx);
                 } else {
@@ -2424,7 +2421,7 @@ public class ObjectInputStream
 
                         bin.setBlockDataMode(true);
                         ClassLoader currentLatestUserDefinedLoaderCache = null;
-                        if (ENABLE_CLASS_CACHING) {
+                        if (OBJECT_STREAM_OPTIMIZE) {
                             ClassLoader classLoader = obj.getClass().getClassLoader();
                             if (classLoader != null &&
                                     classLoader != ClassLoader.getPlatformClassLoader()) {
@@ -2433,7 +2430,7 @@ public class ObjectInputStream
                             }
                         }
                         slotDesc.invokeReadObject(obj, this);
-                        if (ENABLE_CLASS_CACHING && currentLatestUserDefinedLoaderCache != null) {
+                        if (OBJECT_STREAM_OPTIMIZE && currentLatestUserDefinedLoaderCache != null) {
                             latestUserDefinedLoaderCache = currentLatestUserDefinedLoaderCache;
                         }
                     } catch (ClassNotFoundException ex) {
