@@ -29,6 +29,7 @@
 #include "runtime/thread.hpp"
 #include "utilities/debug.hpp"
 #include "runtime/os.inline.hpp"
+#include <time.h>
 
 inline ZLock::ZLock() {
   pthread_mutex_init(&_lock, NULL);
