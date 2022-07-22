@@ -304,7 +304,7 @@ void Coroutine::oops_do(OopClosure* f, CodeBlobClosure* cf) {
     _active_handles->oops_do(f);
     if (_privileged_stack_top != NULL) {
       _privileged_stack_top->oops_do(f);
-    } 
+    }
   }
   if (_wisp_task != NULL) {
     f->do_oop((oop*) &_wisp_engine);
@@ -640,18 +640,18 @@ void WispThread::set_wisp_booted(Thread* thread) {
 /*
  * Avoid coroutine switch in the following scenarios:
  *
- * - _wisp_booted: 
- *   We guarantee the classes referenced by WispTask.park(called in WispThread::park in native) 
+ * - _wisp_booted:
+ *   We guarantee the classes referenced by WispTask.park(called in WispThread::park in native)
  *   are already loaded after _wisp_booted is set(as true). Otherwise it might result in loading class during execution of WispTask.park.
  *   Coroutine switch caused by object monitors in class loading might lead to recursive deadlock.
  *
  * - !com_alibaba_wisp_engine_WispCarrier::is_critical(_coroutine->wisp_engine()):
- *   If the program is already running in kernel code of wisp engine(marked by WispEngine.isInCritical at Java level),  we don't expect 
+ *   If the program is already running in kernel code of wisp engine(marked by WispEngine.isInCritical at Java level),  we don't expect
  *   the switch while coroutine running into 'synchronized' block which is heavily used by Java NIO library.
  *   Otherwise, it might lead to potential recursive deadlock.
- * 
+ *
  * - monitor->object() != java_lang_ref_Reference::pending_list_lock():
- *   pending_list_lock(PLL) is special ObjectMonitor used in GC vm operation. 
+ *   pending_list_lock(PLL) is special ObjectMonitor used in GC vm operation.
  *   if we treated it as normal monitor(T10965418)
  *   - 'dead lock' in jni_critical case:
  *     Given coroutine A, B running in the same thread,
@@ -775,6 +775,9 @@ void WispThread::park(long millis, const ObjectWaiter* ow) {
     // we need clear it to prevent jvm crash
     if (jt->has_pending_exception()) {
        if (EnableCoroutine && Wisp2ThreadStop && jt->pending_exception()->klass() == SystemDictionary::ThreadDeath_klass()) {
+         if (jt->wisp_event_ring_buffer()) {
+           jt->wisp_event_ring_buffer()->commit(WISP_ASYNC_DEATH, NULL, 0);
+         }
          jt->set_pending_async_exception(jt->pending_exception());
        }
        jt->clear_pending_exception();
@@ -801,6 +804,10 @@ void WispThread::unpark(int task_id, bool using_wisp_park, bool proxy_unpark, Pa
   }
 
   JavaThread* jt = THREAD->is_Wisp_thread() ? ((WispThread*) THREAD)->thread() : (JavaThread*) THREAD;
+
+  if (jt->wisp_event_ring_buffer()) {
+    jt->wisp_event_ring_buffer()->commit(WISP_UNPARK, NULL, task_id);
+  }
 
   assert(UseWispMonitor, "UseWispMonitor must be true here");
   bool proxy_unpark_special_case = false;
@@ -1035,7 +1042,7 @@ void Coroutine::after_safepoint(JavaThread* thread) {
   }
 
   coroutine->_is_yielding = true;
-  // "yield" will immediately switch context to execute other coroutines. 
+  // "yield" will immediately switch context to execute other coroutines.
   // After all the runnable coroutines has been executed, we'll switch back.
   //
   // - The preempt mechanism should be disabled when current coroutine is calling "yield"
@@ -1063,6 +1070,9 @@ void Coroutine::after_safepoint(JavaThread* thread) {
     // If it's a SOF / OOM / ThreadDeath exception, we'd clear it
     // because polling page stub shouldn't have a pending exception.
     if (UseWisp2 && Wisp2ThreadStop && thread->pending_exception()->klass() == SystemDictionary::ThreadDeath_klass()) {
+      if (thread->wisp_event_ring_buffer()) {
+        thread->wisp_event_ring_buffer()->commit(WISP_ASYNC_DEATH, NULL, 0);
+      }
       thread->set_pending_async_exception(thread->pending_exception());
     }
     thread->clear_pending_exception();
@@ -1333,4 +1343,61 @@ bool clear_interrupt_for_wisp(Thread* thread) {
   thread->osthread()->set_interrupted(false);
 
   return interrupted;
+}
+
+void WispEventRingBuffer::commit(int ev, oop lock_obj, int unpark) {
+  assert(Thread::current() == thread, "WispEventRingBuffer is thread local");
+  if (thread->current_coroutine()->wisp_task() == NULL) return;
+
+  WispTracingEvent *event = events + (cur++ & IDX_MARK) % size;
+  event->ev = ev;
+  event->wisp_task = thread->current_coroutine()->wisp_task();
+  event->time = os::javaTimeNanos();
+  event->lock_obj = lock_obj;
+  event->unpark = unpark;
+}
+
+void WispEventRingBuffer::print_on(outputStream *st) const {
+  st->print_cr("\nWisp Events for Carrier Thread \"%s\":", thread->name());
+  int from = ((cur + 1) & IDX_MARK) % size;
+  int to = (cur & IDX_MARK) % size;
+  for (int i = from; ; i = (i + 1) % size) {
+    WispTracingEvent *event = events + i;
+    if (event->time) {
+      event->print_on(st);
+    }
+    if (i == to) break;
+  }
+  st->cr();
+}
+
+void WispEventRingBuffer::oops_do(OopClosure *f) {
+  for (int i = 0; i < size; i++) {
+    WispTracingEvent *event = events + i;
+    if (event->lock_obj != NULL) f->do_oop((oop*) &event->lock_obj);
+    if (event->wisp_task != NULL) f->do_oop((oop*) &event->wisp_task);
+  }
+}
+
+void WispTracingEvent::print_on(outputStream* st) const {
+  const char *event_str = NULL;
+  switch (ev) {
+  case WISP_SLOW_ENTER: event_str = "WISP_SLOW_ENTER"; break;
+  case WISP_SLOW_EXIT: event_str = "WISP_SLOW_EXIT"; break;
+  case WISP_ASYNC_DEATH: event_str = "WISP_ASYNC_DEATH"; break;
+  case WISP_UNPARK: event_str = "WISP_UNPARK"; break;
+  }
+  assert(wisp_task != NULL, "sanity");
+
+  char buf[128] = "<cached>";
+  oop thread_obj = com_alibaba_wisp_engine_WispTask::get_threadWrapper(wisp_task);
+  if (thread_obj != NULL) {
+    oop name = java_lang_Thread::name(thread_obj);
+    if (name != NULL) {
+      java_lang_String::as_utf8_string(name, buf, sizeof(buf));
+    }
+    buf[127] = '\0';
+  }
+  st->print("    [%ld]: wisp=#%d \"%s\" ev=%s ", time, com_alibaba_wisp_engine_WispTask::get_id(wisp_task), buf, event_str);
+  st->print_cr("lock_obj="INTPTR_FORMAT", unpark_id=%d", p2i(lock_obj), unpark);
 }

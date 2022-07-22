@@ -1674,6 +1674,7 @@ void JavaThread::initialize() {
   _coroutine_list = NULL;
   _current_coroutine = NULL;
   _wisp_preempted = false;
+  _wisp_event_ring_buffer = NULL;
 
   _thread_stat = NULL;
   _thread_stat = new ThreadStatistics();
@@ -1799,6 +1800,7 @@ JavaThread::~JavaThread() {
      CoroutineStack::free_stack(coroutine_list()->stack(), this);
      delete coroutine_list();
   }
+  delete wisp_event_ring_buffer();
 
   // JSR166 -- return the parker to the free list
   Parker::Release(_parker);
@@ -3007,6 +3009,9 @@ void JavaThread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
       current->oops_do(f, cf);
       current = current->next();
     } while (current != _coroutine_list);
+    if (wisp_event_ring_buffer()) {
+      wisp_event_ring_buffer()->oops_do(f);
+    }
   }
 
   // callee_target is never live across a gc point so NULL it here should
@@ -4854,6 +4859,9 @@ void Threads::print_on(outputStream* st, bool print_stacks,
             c->print_stack_on(st);
             c = c->next();
           } while (c != p->coroutine_list());
+          if (p->wisp_event_ring_buffer()) {
+            p->wisp_event_ring_buffer()->print_on(st);
+          }
         }
       }
     }
@@ -5252,4 +5260,7 @@ void Threads::verify() {
 void JavaThread::initialize_coroutine_support() {
   assert(EnableCoroutine, "EnableCoroutine isn't enable");
   Coroutine::create_thread_coroutine(this, CoroutineStack::create_thread_stack(this))->insert_into_list(_coroutine_list);
+  if (WispTracingBufferSize > 0) {
+    _wisp_event_ring_buffer = new WispEventRingBuffer(this);
+  }
 }

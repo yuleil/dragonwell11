@@ -97,6 +97,7 @@ class WorkerThread;
 class Coroutine;
 class CoroutineStack;
 class WispThread;
+class WispEventRingBuffer;
 
 // Class hierarchy
 // - Thread
@@ -1152,6 +1153,7 @@ class JavaThread: public Thread {
   // coroutine support
   Coroutine*        _coroutine_list;
   Coroutine*        _current_coroutine;
+  WispEventRingBuffer* _wisp_event_ring_buffer;
   bool              _wisp_preempted;
 
   intptr_t          _coroutine_temp;
@@ -1161,7 +1163,8 @@ class JavaThread: public Thread {
   Coroutine* current_coroutine()                 { return _current_coroutine; }
   void set_current_coroutine(Coroutine *coro)    { _current_coroutine = coro; }
   bool wisp_preempted() const                    { return _wisp_preempted; }
-  void set_wisp_preempted(bool b)                  { _wisp_preempted = b; }
+  void set_wisp_preempted(bool b)                { _wisp_preempted = b; }
+  WispEventRingBuffer* wisp_event_ring_buffer() const { return _wisp_event_ring_buffer; }
 
   static ByteSize coroutine_temp_offset()        { return byte_offset_of(JavaThread, _coroutine_temp); }
   static ByteSize current_coroutine_offset()     { return byte_offset_of(JavaThread, _current_coroutine); }

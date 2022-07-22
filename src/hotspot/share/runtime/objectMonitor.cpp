@@ -41,6 +41,7 @@
 #include "runtime/safefetch.inline.hpp"
 #include "runtime/safepointMechanism.inline.hpp"
 #include "runtime/sharedRuntime.hpp"
+#include "runtime/thread.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/coroutine.hpp"
 #include "services/threadService.hpp"
@@ -267,6 +268,11 @@ void ObjectMonitor::enter(TRAPS) {
   // The following code is ordered to check the most common cases first
   // and to reduce RTS->RTO cache line upgrades on SPARC and IA32 processors.
   if (UseWispMonitor) {
+    assert(THREAD->is_Java_thread(), "invariant");
+    JavaThread *jt = ((JavaThread *)THREAD);
+    if (jt->wisp_event_ring_buffer()) {
+      jt->wisp_event_ring_buffer()->commit(WISP_SLOW_ENTER, (oop)object(), 0);
+    }
     THREAD = WispThread::current(THREAD);
   }
   Thread * const Self = THREAD;
@@ -950,6 +956,11 @@ void ObjectMonitor::UnlinkAfterAcquire(Thread *Self, ObjectWaiter *SelfNode) {
 
 void ObjectMonitor::exit(bool not_suspended, TRAPS) {
   if (UseWispMonitor) {
+    assert(THREAD->is_Java_thread(), "invariant");
+    JavaThread *jt = ((JavaThread *)THREAD);
+    if (jt->wisp_event_ring_buffer()) {
+      jt->wisp_event_ring_buffer()->commit(WISP_SLOW_EXIT, (oop)object(), 0);
+    }
     THREAD = WispThread::current(THREAD);
   }
   Thread * const Self = THREAD;
@@ -2567,4 +2578,5 @@ void ObjectMonitor::sanity_checks() {
 void ObjectMonitor_test() {
   ObjectMonitor::sanity_checks();
 }
+
 #endif

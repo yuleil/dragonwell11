@@ -466,7 +466,7 @@ public:
 
   static WispThread* current(Thread* thread) {
     assert(thread->is_Java_thread(), "invariant") ;
-    return thread->is_Wisp_thread() ? (WispThread*) thread : 
+    return thread->is_Wisp_thread() ? (WispThread*) thread :
       ((JavaThread*) thread)->current_coroutine()->wisp_thread();
   }
 };
@@ -653,5 +653,54 @@ public:
 };
 
 bool clear_interrupt_for_wisp(Thread *);
+
+enum {
+  WISP_SLOW_ENTER,
+  WISP_SLOW_EXIT,
+  WISP_ASYNC_DEATH,
+  WISP_UNPARK,
+};
+
+class WispTracingEvent: public CHeapObj<mtWisp> {
+  friend class WispEventRingBuffer;
+
+  int ev;
+  jlong time;
+  // reference to wisp_task & lock_obj will prevent the objects
+  // from being GC, but it should be quickly overwritten by new
+  // events here, and we are already in diagnostic mode.
+  oop wisp_task;
+  oop lock_obj;
+  int unpark;
+  WispTracingEvent():
+    ev(0), time(0), wisp_task(NULL), lock_obj(NULL), unpark(0)
+    {}
+  void print_on(outputStream* st) const;
+};
+
+class WispEventRingBuffer: public CHeapObj<mtWisp> {
+  static const int IDX_MARK = 0xFFFFFF;
+
+  JavaThread * const thread;
+  WispTracingEvent * const events;
+  const int size;
+  int cur;
+
+public:
+  WispEventRingBuffer(JavaThread *thread):
+    thread(thread),
+    events(new WispTracingEvent[WispTracingBufferSize]),
+    size(WispTracingBufferSize),
+    cur(0)
+    {}
+
+  ~WispEventRingBuffer() {
+    delete [] events;
+  }
+
+  void oops_do(OopClosure* f);
+  void print_on(outputStream* st) const;
+  void commit(int ev, oop lock_obj, int unpark);
+};
 
 #endif // SHARE_VM_RUNTIME_COROUTINE_HPP

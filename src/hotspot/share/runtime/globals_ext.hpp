@@ -53,6 +53,7 @@
                                                                             \
   experimental(bool, UseWisp2, false,                                       \
           "Enable Wisp2")                                                   \
+                                                                            \
   experimental(bool, Wisp2ThreadStop, false,                                \
           "ThreadDeath cannot be catched")                                  \
                                                                             \
@@ -61,6 +62,9 @@
                                                                             \
   diagnostic(bool, VerboseWisp, false,                                      \
           "Print verbose Wisp information")                                 \
+                                                                            \
+  diagnostic(intx, WispTracingBufferSize, 0,                                \
+          "Wisp per-thread tracing ring buffer size ")                      \
 
   //add new AJDK specific flags here
 
@@ -75,7 +79,7 @@ DRAGONWELL_FLAGS(DECLARE_DEVELOPER_FLAG, DECLARE_PD_DEVELOPER_FLAG, DECLARE_PROD
                                       RUNTIME_PRODUCT_FLAG_MEMBER, RUNTIME_PD_PRODUCT_FLAG_MEMBER,      \
                                       RUNTIME_DIAGNOSTIC_FLAG_MEMBER, RUNTIME_EXPERIMENTAL_FLAG_MEMBER, \
                                       RUNTIME_NOTPRODUCT_FLAG_MEMBER, RUNTIME_MANAGEABLE_FLAG_MEMBER,   \
-                                      RUNTIME_PRODUCT_RW_FLAG_MEMBER, RUNTIME_LP64_PRODUCT_FLAG_MEMBER) 
+                                      RUNTIME_PRODUCT_RW_FLAG_MEMBER, RUNTIME_LP64_PRODUCT_FLAG_MEMBER)
 
 // Additional JVMFlagsWithType enum values
 #define JVMFLAGSWITHTYPE_EXT DRAGONWELL_FLAGS(RUNTIME_DEVELOP_FLAG_MEMBER_WITH_TYPE,       \
